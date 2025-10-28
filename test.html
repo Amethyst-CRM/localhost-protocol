@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Local File Protocol Test</title>
+</head>
+<body>
+    <h1>Local File Protocol Test</h1>
+    
+    <h2>macOS/Linux:</h2>
+    <a href="localfile://open?path=/tmp">Open /tmp</a><br>
+    <a href="localfile://open?path=~/Downloads">Open ~/Downloads</a><br>
+    
+    <h2>Windows:</h2>
+    <a href="localfile://open?path=C:\Users">Open C:\Users</a><br>
+    <a href="localfile://open?path=%USERPROFILE%\Downloads">Open Downloads</a><br>
+    
+    <h2>JavaScript:</h2>
+    <button onclick="openLocal()">Open Folder</button>
+    
+    <script>
+        function openLocal() {
+            const isWindows = navigator.platform.includes('Win');
+            const isMac = navigator.platform.includes('Mac');
+            
+            let path;
+            if (isWindows) {
+                path = 'C:\\Users\\' + 'YourUsername' + '\\Downloads';
+            } else if (isMac) {
+                path = '~/Downloads';
+            } else {
+                path = '~/Downloads';
+            }
+            
+            window.location.href = 'localfile://open?path=' + encodeURIComponent(path);
+        }
+    </script>
+</body>
+</html>
