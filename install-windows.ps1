@@ -1,5 +1,7 @@
-New-Item -ItemType Directory -Force -Path "C:\Program Files\LocalFileHandler"
+# Create the handler directory
+New-Item -ItemType Directory -Force -Path "C:\Program Files\LocalFileHandler" | Out-Null
 
+# Create the batch file handler
 @'
 @echo off
 setlocal enabledelayedexpansion
@@ -28,8 +30,14 @@ if exist "!PATH_TO_OPEN!" (
 ) else (
     echo %date% %time%: Path not found: !PATH_TO_OPEN! >> "%USERPROFILE%\localfile-handler.log"
 )
-'@ | Out-File -FilePath "C:\Program Files\LocalFileHandler\handler.bat" -Encoding ASCII
+'@ | Out-File -FilePath "C:\Program Files\LocalFileHandler\handler.bat" -Encoding ASCII -Force
 
+# Ensure HKCR drive exists
+if (-not (Get-PSDrive HKCR -ErrorAction SilentlyContinue)) {
+    New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT | Out-Null
+}
+
+# Create registry entries for the custom URL protocol
 New-Item -Path "HKCR:\localfile" -Force | Out-Null
 Set-ItemProperty -Path "HKCR:\localfile" -Name "(Default)" -Value "URL:Local File Protocol"
 Set-ItemProperty -Path "HKCR:\localfile" -Name "URL Protocol" -Value ""
@@ -37,6 +45,7 @@ Set-ItemProperty -Path "HKCR:\localfile" -Name "URL Protocol" -Value ""
 New-Item -Path "HKCR:\localfile\shell\open\command" -Force | Out-Null
 Set-ItemProperty -Path "HKCR:\localfile\shell\open\command" -Name "(Default)" -Value '"C:\Program Files\LocalFileHandler\handler.bat" "%1"'
 
+# Optional .reg file backup
 @'
 Windows Registry Editor Version 5.00
 
@@ -50,10 +59,16 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CLASSES_ROOT\localfile\shell\open\command]
 @="\"C:\\Program Files\\LocalFileHandler\\handler.bat\" \"%1\""
-'@ | Out-File -FilePath "$env:TEMP\register-localfile.reg" -Encoding ASCII
+'@ | Out-File -FilePath "$env:TEMP\register-localfile.reg" -Encoding ASCII -Force
 
-reg import "$env:TEMP\register-localfile.reg"
+# Import the registry (silent)
+reg import "$env:TEMP\register-localfile.reg" | Out-Null
 
-Start-Process "localfile://open?path=C:\Users\$env:USERNAME\Downloads"
+# Test launch (optional)
+$testPath = "C:\Users\$env:USERNAME\Downloads"
+Write-Host "Testing launch: localfile://open?path=$testPath"
+Start-Process "localfile://open?path=$testPath"
 
-# localfile://open?path=C:\Users\YourName\Downloads
+Write-Host "✅ Local File Protocol (localfile://) successfully installed and tested."
+Write-Host "   You can now use links like:"
+Write-Host "   localfile://open?path=C:\Users\$env:USERNAME\Downloads"
