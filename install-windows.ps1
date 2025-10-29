@@ -1,74 +1,112 @@
+# Windows Local File Protocol Handler Installer
+# Run as Administrator
+
 # Create the handler directory
-New-Item -ItemType Directory -Force -Path "C:\Program Files\LocalFileHandler" | Out-Null
+$handlerDir = "C:\Program Files\LocalFileHandler"
+New-Item -ItemType Directory -Force -Path $handlerDir | Out-Null
 
-# Create the batch file handler
-@'
+# Create PowerShell handler script (more reliable than batch)
+$handlerScript = @'
+param($url)
+
+# Log function
+function Write-Log {
+    param($message)
+    $logPath = "$env:USERPROFILE\localfile-handler.log"
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp : $message" | Out-File -FilePath $logPath -Append
+}
+
+Write-Log "Raw URL: $url"
+
+# Remove protocol prefix
+$url = $url -replace '^localfile://', ''
+$url = $url -replace '^localfile:', ''
+$url = $url -replace '^//', ''
+$url = $url -replace '^open\?', ''
+
+Write-Log "After prefix removal: $url"
+
+# Extract path parameter
+if ($url -match 'path=([^&]+)') {
+    $pathEncoded = $matches[1]
+    
+    # URL decode
+    Add-Type -AssemblyName System.Web
+    $pathDecoded = [System.Web.HttpUtility]::UrlDecode($pathEncoded)
+    
+    # Handle forward slashes
+    $pathDecoded = $pathDecoded -replace '/', '\'
+    
+    # Expand environment variables
+    $pathExpanded = [System.Environment]::ExpandEnvironmentVariables($pathDecoded)
+    
+    Write-Log "Decoded path: $pathExpanded"
+    
+    # Check if path exists
+    if (Test-Path $pathExpanded) {
+        # Open in Explorer
+        Start-Process explorer.exe $pathExpanded
+        Write-Log "Successfully opened: $pathExpanded"
+    } else {
+        Write-Log "ERROR: Path not found: $pathExpanded"
+        # Show error to user
+        [System.Windows.Forms.MessageBox]::Show(
+            "Path not found: $pathExpanded",
+            "Local File Handler",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        ) | Out-Null
+    }
+} else {
+    Write-Log "ERROR: Could not parse URL: $url"
+}
+'@
+
+$handlerScript | Out-File -FilePath "$handlerDir\handler.ps1" -Encoding UTF8 -Force
+
+# Create wrapper batch file that calls PowerShell
+$batchWrapper = @'
 @echo off
-setlocal enabledelayedexpansion
+powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Program Files\LocalFileHandler\handler.ps1" %*
+'@
 
-REM Get the URL argument
-set "URL=%~1"
-
-REM Remove localfile:// prefix
-set "URL=!URL:localfile://=!"
-
-REM Extract path from URL (simple parsing)
-for /f "tokens=2 delims==" %%a in ("!URL!") do set "PATH_TO_OPEN=%%a"
-
-REM URL decode basic characters (spaces, etc)
-set "PATH_TO_OPEN=!PATH_TO_OPEN:%%20= !"
-set "PATH_TO_OPEN=!PATH_TO_OPEN:%%2F=/!"
-set "PATH_TO_OPEN=!PATH_TO_OPEN:/=\!"
-
-REM Expand environment variables
-call set "PATH_TO_OPEN=!PATH_TO_OPEN!"
-
-REM Check if path exists and open
-if exist "!PATH_TO_OPEN!" (
-    explorer "!PATH_TO_OPEN!"
-    echo %date% %time%: Opened !PATH_TO_OPEN! >> "%USERPROFILE%\localfile-handler.log"
-) else (
-    echo %date% %time%: Path not found: !PATH_TO_OPEN! >> "%USERPROFILE%\localfile-handler.log"
-)
-'@ | Out-File -FilePath "C:\Program Files\LocalFileHandler\handler.bat" -Encoding ASCII -Force
+$batchWrapper | Out-File -FilePath "$handlerDir\handler.bat" -Encoding ASCII -Force
 
 # Ensure HKCR drive exists
 if (-not (Get-PSDrive HKCR -ErrorAction SilentlyContinue)) {
     New-PSDrive -Name HKCR -PSProvider Registry -Root HKEY_CLASSES_ROOT | Out-Null
 }
 
-# Create registry entries for the custom URL protocol
+# Create registry entries
+Write-Host "Creating registry entries..."
+
 New-Item -Path "HKCR:\localfile" -Force | Out-Null
 Set-ItemProperty -Path "HKCR:\localfile" -Name "(Default)" -Value "URL:Local File Protocol"
-Set-ItemProperty -Path "HKCR:\localfile" -Name "URL Protocol" -Value ""
+New-ItemProperty -Path "HKCR:\localfile" -Name "URL Protocol" -Value "" -PropertyType String -Force | Out-Null
+
+New-Item -Path "HKCR:\localfile\DefaultIcon" -Force | Out-Null
+Set-ItemProperty -Path "HKCR:\localfile\DefaultIcon" -Name "(Default)" -Value "explorer.exe,0"
 
 New-Item -Path "HKCR:\localfile\shell\open\command" -Force | Out-Null
-Set-ItemProperty -Path "HKCR:\localfile\shell\open\command" -Name "(Default)" -Value '"C:\Program Files\LocalFileHandler\handler.bat" "%1"'
+Set-ItemProperty -Path "HKCR:\localfile\shell\open\command" -Name "(Default)" -Value "`"$handlerDir\handler.bat`" `"%1`""
 
-# Optional .reg file backup
-@'
-Windows Registry Editor Version 5.00
+Write-Host "✅ Installation complete!" -ForegroundColor Green
+Write-Host ""
+Write-Host "Testing the handler..."
+Start-Sleep -Seconds 2
 
-[HKEY_CLASSES_ROOT\localfile]
-@="URL:Local File Protocol"
-"URL Protocol"=""
+# Test with Downloads folder
+$testPath = "$env:USERPROFILE\Downloads"
+$testUrl = "localfile://open?path=$testPath"
 
-[HKEY_CLASSES_ROOT\localfile\shell]
+Write-Host "Opening: $testUrl" -ForegroundColor Cyan
+Start-Process $testUrl
 
-[HKEY_CLASSES_ROOT\localfile\shell\open]
-
-[HKEY_CLASSES_ROOT\localfile\shell\open\command]
-@="\"C:\\Program Files\\LocalFileHandler\\handler.bat\" \"%1\""
-'@ | Out-File -FilePath "$env:TEMP\register-localfile.reg" -Encoding ASCII -Force
-
-# Import the registry (silent)
-reg import "$env:TEMP\register-localfile.reg" | Out-Null
-
-# Test launch (optional)
-$testPath = "C:\Users\$env:USERNAME\Downloads"
-Write-Host "Testing launch: localfile://open?path=$testPath"
-Start-Process "localfile://open?path=$testPath"
-
-Write-Host "✅ Local File Protocol (localfile://) successfully installed and tested."
-Write-Host "   You can now use links like:"
-Write-Host "   localfile://open?path=C:\Users\$env:USERNAME\Downloads"
+Write-Host ""
+Write-Host "If your Downloads folder opened, the handler is working!" -ForegroundColor Green
+Write-Host "Check the log at: $env:USERPROFILE\localfile-handler.log" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Example usage:"
+Write-Host "  localfile://open?path=C:\Users\YourName\Documents"
+Write-Host "  localfile://open?path=%USERPROFILE%\Downloads"
